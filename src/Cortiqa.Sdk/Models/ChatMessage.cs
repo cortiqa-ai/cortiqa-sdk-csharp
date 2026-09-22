@@ -19,6 +19,17 @@ namespace Cortiqa.Sdk.Models
         [JsonPropertyName("content")]
         public string? Content { get; set; }
 
+        [JsonPropertyName("reasoning")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? Reasoning { get; set; }
+
+        [JsonPropertyName("reasoning_content")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? ReasoningContent { get; set; }
+
+        [JsonIgnore]
+        public string? Thought => !string.IsNullOrEmpty(Reasoning) ? Reasoning : ReasoningContent;
+
         [JsonPropertyName("name")]
         [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
         public string? Name { get; set; }

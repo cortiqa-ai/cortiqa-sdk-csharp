@@ -6,7 +6,7 @@ namespace Cortiqa.Sdk.Models
     public class ChatCompletionRequest
     {
         [JsonPropertyName("model")]
-        public string Model { get; set; } = "falin-01";
+        public string Model { get; set; } = CortiqaClientOptions.DefaultModelId;
 
         [JsonPropertyName("messages")]
         public List<ChatMessage> Messages { get; set; } = new List<ChatMessage>();

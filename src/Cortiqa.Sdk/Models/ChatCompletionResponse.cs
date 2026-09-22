@@ -28,6 +28,18 @@ namespace Cortiqa.Sdk.Models
         /// </summary>
         [JsonIgnore]
         public string Content => (Choices != null && Choices.Count > 0) ? Choices[0].Message?.Content ?? string.Empty : string.Empty;
+
+        /// <summary>
+        /// Alias for Content returning the first choice assistant text content.
+        /// </summary>
+        [JsonIgnore]
+        public string FirstContent => Content;
+
+        /// <summary>
+        /// Convenience property returning the first choice reasoning / thought content.
+        /// </summary>
+        [JsonIgnore]
+        public string? Reasoning => (Choices != null && Choices.Count > 0) ? Choices[0].Message?.Thought : null;
     }
 
     public class ChatCompletionChoice
@@ -79,6 +91,14 @@ namespace Cortiqa.Sdk.Models
 
         [JsonPropertyName("content")]
         public string? Content { get; set; }
+
+        [JsonPropertyName("reasoning")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? Reasoning { get; set; }
+
+        [JsonPropertyName("reasoning_content")]
+        [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string? ReasoningContent { get; set; }
 
         [JsonPropertyName("tool_calls")]
         public List<ToolCall>? ToolCalls { get; set; }

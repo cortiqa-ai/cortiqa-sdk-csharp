@@ -18,7 +18,7 @@ namespace Cortiqa.Sdk
         private readonly bool _disposeHttpClient;
         private readonly CortiqaClientOptions _options;
 
-        public const string Version = "0.1.0";
+        public const string Version = "0.1.1";
 
         /// <summary>
         /// OpenAI-compatible chat service.
@@ -67,6 +67,30 @@ namespace Cortiqa.Sdk
         }
 
         public static CortiqaClient FromEnvironment() => new CortiqaClient(CortiqaClientOptions.FromEnvironment());
+
+        /// <summary>
+        /// Quick one-liner helper to generate a chat completion and return the assistant text directly.
+        /// </summary>
+        /// <param name="prompt">User message prompt.</param>
+        /// <param name="system">Optional system prompt.</param>
+        /// <param name="cancellationToken">Cancellation token.</param>
+        /// <returns>Assistant response text.</returns>
+        public async Task<string> PromptAsync(string prompt, string? system = null, CancellationToken cancellationToken = default)
+        {
+            var messages = new System.Collections.Generic.List<Cortiqa.Sdk.Models.ChatMessage>();
+            if (!string.IsNullOrWhiteSpace(system))
+            {
+                messages.Add(Cortiqa.Sdk.Models.ChatMessage.System(system!));
+            }
+            messages.Add(Cortiqa.Sdk.Models.ChatMessage.User(prompt));
+
+            var response = await Chat.CreateAsync(new Cortiqa.Sdk.Models.ChatCompletionRequest
+            {
+                Messages = messages
+            }, cancellationToken).ConfigureAwait(false);
+
+            return response.Content;
+        }
 
         internal async Task<HttpResponseMessage> SendWithRetryAsync(
             HttpMethod method,
@@ -139,21 +163,126 @@ namespace Cortiqa.Sdk
 
                 response.Dispose();
 
+                string message = $"Cortiqa API error (HTTP {statusCode}).";
+                string? param = null;
+                string? code = null;
+                string? errorType = null;
+
+                if (!string.IsNullOrWhiteSpace(errorBody))
+                {
+                    try
+                    {
+                        using var doc = System.Text.Json.JsonDocument.Parse(errorBody!);
+                        var root = doc.RootElement;
+                        if (root.ValueKind == System.Text.Json.JsonValueKind.Object)
+                        {
+                            if (root.TryGetProperty("error", out var errorProp))
+                            {
+                                if (errorProp.ValueKind == System.Text.Json.JsonValueKind.Object)
+                                {
+                                    if (errorProp.TryGetProperty("message", out var msgProp) && msgProp.ValueKind == System.Text.Json.JsonValueKind.String)
+                                        message = msgProp.GetString() ?? message;
+                                    if (errorProp.TryGetProperty("param", out var paramProp) && paramProp.ValueKind == System.Text.Json.JsonValueKind.String)
+                                        param = paramProp.GetString();
+                                    if (errorProp.TryGetProperty("code", out var codeProp) && codeProp.ValueKind == System.Text.Json.JsonValueKind.String)
+                                        code = codeProp.GetString();
+                                    if (errorProp.TryGetProperty("type", out var typeProp) && typeProp.ValueKind == System.Text.Json.JsonValueKind.String)
+                                        errorType = typeProp.GetString();
+                                }
+                                else if (errorProp.ValueKind == System.Text.Json.JsonValueKind.String)
+                                {
+                                    message = errorProp.GetString() ?? message;
+                                }
+                            }
+                            else if (root.TryGetProperty("detail", out var detailProp))
+                            {
+                                if (detailProp.ValueKind == System.Text.Json.JsonValueKind.Array)
+                                {
+                                    var detailItems = new System.Collections.Generic.List<string>();
+                                    bool isFirst = true;
+                                    foreach (var item in detailProp.EnumerateArray())
+                                    {
+                                        string? locStr = null;
+                                        if (item.TryGetProperty("loc", out var locProp) && locProp.ValueKind == System.Text.Json.JsonValueKind.Array)
+                                        {
+                                            var locParts = new System.Collections.Generic.List<string>();
+                                            foreach (var p in locProp.EnumerateArray())
+                                            {
+                                                var pStr = p.ToString();
+                                                if (pStr != "body") locParts.Add(pStr);
+                                            }
+                                            if (locParts.Count > 0)
+                                            {
+                                                locStr = string.Join(".", locParts);
+                                                if (isFirst) param = locStr;
+                                            }
+                                        }
+
+                                        string? msg = null;
+                                        if (item.TryGetProperty("msg", out var m) && m.ValueKind == System.Text.Json.JsonValueKind.String)
+                                        {
+                                            msg = m.GetString();
+                                        }
+
+                                        if (isFirst && item.TryGetProperty("type", out var t) && t.ValueKind == System.Text.Json.JsonValueKind.String)
+                                        {
+                                            code = t.GetString();
+                                        }
+
+                                        if (!string.IsNullOrEmpty(locStr) && !string.IsNullOrEmpty(msg))
+                                        {
+                                            detailItems.Add($"{locStr}: {msg}");
+                                        }
+                                        else if (!string.IsNullOrEmpty(msg))
+                                        {
+                                            detailItems.Add(msg!);
+                                        }
+                                        isFirst = false;
+                                    }
+
+                                    if (detailItems.Count > 0)
+                                    {
+                                        message = string.Join("; ", detailItems);
+                                    }
+                                }
+                                else if (detailProp.ValueKind == System.Text.Json.JsonValueKind.String)
+                                {
+                                    message = detailProp.GetString() ?? message;
+                                }
+                            }
+                            else if (root.TryGetProperty("message", out var directMsg) && directMsg.ValueKind == System.Text.Json.JsonValueKind.String)
+                            {
+                                message = directMsg.GetString() ?? message;
+                            }
+                        }
+                    }
+                    catch
+                    {
+                        message = errorBody!;
+                    }
+                }
+
                 switch (response.StatusCode)
                 {
+                    case HttpStatusCode.BadRequest:
+                        throw new BadRequestException(message, errorBody, param, code, errorType);
                     case HttpStatusCode.Unauthorized:
-                        throw new AuthenticationException("Invalid or missing Cortiqa API key (HTTP 401).", errorBody);
-                    case (HttpStatusCode)429:
-                        throw new RateLimitException("Cortiqa rate limit exceeded (HTTP 429).", errorBody);
+                        throw new AuthenticationException(message, errorBody, param, code, errorType);
+                    case HttpStatusCode.Forbidden:
+                        throw new PermissionDeniedException(message, errorBody, param, code, errorType);
                     case HttpStatusCode.NotFound:
-                        throw new NotFoundException($"Resource not found at {relativePath} (HTTP 404).", errorBody);
+                        throw new NotFoundException(message, errorBody, param, code, errorType);
+                    case (HttpStatusCode)422:
+                        throw new UnprocessableEntityException(message, errorBody, param, code, errorType);
+                    case (HttpStatusCode)429:
+                        throw new RateLimitException(message, errorBody, param, code, errorType);
                     case HttpStatusCode.InternalServerError:
                     case HttpStatusCode.BadGateway:
                     case HttpStatusCode.ServiceUnavailable:
                     case HttpStatusCode.GatewayTimeout:
-                        throw new InternalServerException($"Cortiqa server error (HTTP {statusCode}).", response.StatusCode, errorBody);
+                        throw new InternalServerException(message, response.StatusCode, errorBody, param, code, errorType);
                     default:
-                        throw new ApiException($"Cortiqa API error (HTTP {statusCode}): {errorBody}", response.StatusCode, errorBody);
+                        throw new ApiException(message, response.StatusCode, errorBody, param, code, errorType);
                 }
             }
         }

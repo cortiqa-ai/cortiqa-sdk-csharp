@@ -9,6 +9,7 @@ namespace Cortiqa.Sdk
     public class CortiqaClientOptions
     {
         public const string DefaultBaseUrl = "https://api.cortiqa.co";
+        public const string DefaultModelId = "openai/gpt-oss-120b";
         public const int DefaultMaxRetries = 2;
         public static readonly TimeSpan DefaultTimeout = TimeSpan.FromSeconds(60);
 
@@ -21,6 +22,11 @@ namespace Cortiqa.Sdk
         /// Base URL for the Cortiqa API. Defaults to https://api.cortiqa.co.
         /// </summary>
         public string BaseUrl { get; set; } = DefaultBaseUrl;
+
+        /// <summary>
+        /// Default model to use when not specified in completions. Defaults to openai/gpt-oss-120b.
+        /// </summary>
+        public string DefaultModel { get; set; } = DefaultModelId;
 
         /// <summary>
         /// Request timeout. Defaults to 60 seconds.

@@ -170,5 +170,173 @@ namespace Cortiqa.Sdk.Tests
 
             Assert.Equal("Hello World!", accumulated);
         }
+
+        [Fact]
+        public async Task ChatCompletions_UsesDefaultModel_WhenNotSpecified()
+        {
+            string? capturedBody = null;
+            var handler = new MockHttpMessageHandler(req =>
+            {
+                capturedBody = req.Content?.ReadAsStringAsync().Result;
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(@"{
+                        ""id"": ""chatcmpl-def"",
+                        ""choices"": [{""message"": {""role"": ""assistant"", ""content"": ""Default model reply""}}]
+                    }", System.Text.Encoding.UTF8, "application/json")
+                };
+            });
+
+            using var client = new CortiqaClient(new CortiqaClientOptions
+            {
+                ApiKey = "sk-test",
+                HttpClient = new HttpClient(handler)
+            });
+
+            var response = await client.Chat.CreateAsync(new ChatCompletionRequest
+            {
+                Messages = new System.Collections.Generic.List<ChatMessage>
+                {
+                    ChatMessage.User("Hello")
+                }
+            });
+
+            Assert.Equal("Default model reply", response.FirstContent);
+            Assert.NotNull(capturedBody);
+            Assert.Contains("\"openai/gpt-oss-120b\"", capturedBody);
+        }
+
+        [Fact]
+        public async Task ChatCompletions_ParsesReasoningAndThought()
+        {
+            var handler = new MockHttpMessageHandler(req =>
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(@"{
+                        ""id"": ""chatcmpl-think"",
+                        ""choices"": [{
+                            ""message"": {
+                                ""role"": ""assistant"",
+                                ""content"": ""The answer is 42."",
+                                ""reasoning"": ""Thinking step by step...""
+                            }
+                        }]
+                    }", System.Text.Encoding.UTF8, "application/json")
+                };
+            });
+
+            using var client = new CortiqaClient(new CortiqaClientOptions
+            {
+                ApiKey = "sk-test",
+                HttpClient = new HttpClient(handler)
+            });
+
+            var response = await client.Chat.CreateAsync(new ChatCompletionRequest
+            {
+                Messages = new System.Collections.Generic.List<ChatMessage> { ChatMessage.User("What is the meaning?") }
+            });
+
+            Assert.Equal("The answer is 42.", response.FirstContent);
+            Assert.Equal("Thinking step by step...", response.Reasoning);
+            Assert.Equal("Thinking step by step...", response.Choices[0].Message?.Thought);
+        }
+
+        [Fact]
+        public async Task ChatCompletions_NormalizesToolsPayload()
+        {
+            string? capturedBody = null;
+            var handler = new MockHttpMessageHandler(req =>
+            {
+                capturedBody = req.Content?.ReadAsStringAsync().Result;
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(@"{
+                        ""id"": ""chatcmpl-tools"",
+                        ""choices"": [{""message"": {""role"": ""assistant"", ""content"": ""Tool response""}}]
+                    }", System.Text.Encoding.UTF8, "application/json")
+                };
+            });
+
+            using var client = new CortiqaClient(new CortiqaClientOptions
+            {
+                ApiKey = "sk-test",
+                HttpClient = new HttpClient(handler)
+            });
+
+            var response = await client.Chat.CreateAsync(new ChatCompletionRequest
+            {
+                Messages = new System.Collections.Generic.List<ChatMessage> { ChatMessage.User("Use tool") },
+                Tools = new System.Collections.Generic.List<Tool>
+                {
+                    new Tool
+                    {
+                        Function = new FunctionDefinition { Name = "get_weather", Description = "Get weather" }
+                    }
+                }
+            });
+
+            Assert.NotNull(capturedBody);
+            Assert.Contains("\"type\":\"function\"", capturedBody);
+            Assert.Contains("\"name\":\"get_weather\"", capturedBody);
+        }
+
+        [Fact]
+        public async Task PromptAsync_ReturnsAssistantTextDirectly()
+        {
+            var handler = new MockHttpMessageHandler(req =>
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(@"{
+                        ""id"": ""chatcmpl-prompt"",
+                        ""choices"": [{""message"": {""role"": ""assistant"", ""content"": ""Quick response!""}}]
+                    }", System.Text.Encoding.UTF8, "application/json")
+                };
+            });
+
+            using var client = new CortiqaClient(new CortiqaClientOptions
+            {
+                ApiKey = "sk-test",
+                HttpClient = new HttpClient(handler)
+            });
+
+            var reply = await client.PromptAsync("Hello!");
+            Assert.Equal("Quick response!", reply);
+        }
+
+        [Fact]
+        public async Task DetailedError_ParsesParamAndCode_ThrowsUnprocessableEntity()
+        {
+            var handler = new MockHttpMessageHandler(req =>
+            {
+                return new HttpResponseMessage((HttpStatusCode)422)
+                {
+                    Content = new StringContent(@"{
+                        ""detail"": [
+                            {
+                                ""loc"": [""body"", ""messages"", 0, ""content""],
+                                ""msg"": ""field required"",
+                                ""type"": ""value_error.missing""
+                            }
+                        ]
+                    }", System.Text.Encoding.UTF8, "application/json")
+                };
+            });
+
+            using var client = new CortiqaClient(new CortiqaClientOptions
+            {
+                ApiKey = "sk-test",
+                HttpClient = new HttpClient(handler),
+                MaxRetries = 0
+            });
+
+            var ex = await Assert.ThrowsAsync<UnprocessableEntityException>(() =>
+                client.Chat.CreateAsync(new ChatCompletionRequest()));
+
+            Assert.Equal("messages.0.content", ex.Param);
+            Assert.Equal("value_error.missing", ex.Code);
+            Assert.Contains("messages.0.content: field required", ex.Message);
+        }
     }
 }

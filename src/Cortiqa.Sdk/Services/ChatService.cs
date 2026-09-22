@@ -54,12 +54,32 @@ namespace Cortiqa.Sdk.Services
             _client = client ?? throw new ArgumentNullException(nameof(client));
         }
 
+        private void NormalizeRequest(ChatCompletionRequest request)
+        {
+            if (string.IsNullOrWhiteSpace(request.Model))
+            {
+                request.Model = _client.Options.DefaultModel;
+            }
+
+            if (request.Tools != null)
+            {
+                foreach (var tool in request.Tools)
+                {
+                    if (string.IsNullOrWhiteSpace(tool.Type))
+                    {
+                        tool.Type = "function";
+                    }
+                }
+            }
+        }
+
         public async Task<ChatCompletionResponse> CreateAsync(
             ChatCompletionRequest request,
             CancellationToken cancellationToken = default)
         {
             if (request == null) throw new ArgumentNullException(nameof(request));
             request.Stream = false;
+            NormalizeRequest(request);
 
             string json = JsonSerializer.Serialize(request);
             using (var content = new StringContent(json, Encoding.UTF8, "application/json"))
@@ -82,6 +102,7 @@ namespace Cortiqa.Sdk.Services
         {
             if (request == null) throw new ArgumentNullException(nameof(request));
             request.Stream = true;
+            NormalizeRequest(request);
 
             string json = JsonSerializer.Serialize(request);
             var content = new StringContent(json, Encoding.UTF8, "application/json");
